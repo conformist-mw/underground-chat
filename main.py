@@ -1,9 +1,9 @@
 import argparse
 import asyncio
 import logging
+from datetime import datetime
 
 import aiofiles
-from datetime import datetime
 
 # noinspection PyArgumentList
 logging.basicConfig(

@@ -3,11 +3,12 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import suppress
 from datetime import datetime
 from tkinter import messagebox
-from contextlib import suppress
 
 import aiofiles
+from async_timeout import timeout
 
 import gui
 
@@ -18,6 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.DEBUG)
+watchdog_logger = logging.getLogger('watchdog')
+watchdog_logger.setLevel(logging.DEBUG)
 
 
 class TokenDoesNotExists(Exception):
@@ -78,6 +81,7 @@ async def read_messages(host, port, queues):
             full_msg = f'[{date}] {msg}'
             queues['msgs'].put_nowait(full_msg.strip())
             queues['history'].put_nowait(full_msg)
+            queues['watchdog'].put_nowait('New message in chat')
     finally:
         logger.info('Close the connection')
         queues['status'].put_nowait(gui.ReadConnectionStateChanged.CLOSED)
@@ -121,6 +125,7 @@ async def send_msgs(host, port, queues):
             logger.debug('message: %s', msg)
             writer.write((msg + '\n\n').encode())
             await writer.drain()
+            queues['watchdog'].put_nowait('Message sent')
     finally:
         queues['status'].put_nowait(
             gui.SendingConnectionStateChanged.CLOSED,
@@ -130,8 +135,19 @@ async def send_msgs(host, port, queues):
             await writer.wait_closed()
 
 
+async def watch_for_connection(watchdog_queue):
+    while True:
+        try:
+            async with timeout(2):
+                msg = await watchdog_queue.get()
+                watchdog_logger.debug(msg)
+        except asyncio.TimeoutError:
+            raise ConnectionError
+
+
 async def main(queues):
     await asyncio.gather(
+        watch_for_connection(queues['watchdog']),
         load_messages(queues['msgs']),
         gui.draw(queues['msgs'], queues['send'], queues['status']),
         read_messages('minechat.dvmn.org', 5000, queues),

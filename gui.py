@@ -1,7 +1,7 @@
-import tkinter as tk
 import asyncio
-from tkinter.scrolledtext import ScrolledText
+import tkinter as tk
 from enum import Enum
+from tkinter.scrolledtext import ScrolledText
 
 
 class TkAppClosed(Exception):
