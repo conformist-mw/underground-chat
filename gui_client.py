@@ -7,11 +7,15 @@ from contextlib import suppress
 from datetime import datetime
 from tkinter import messagebox
 
+from contextlib import asynccontextmanager
+from typing import Optional, Union, Any
+
 import aiofiles
 from async_timeout import timeout
 
 import gui
 
+from gui import ReadConnectionStateChanged, SendingConnectionStateChanged
 # noinspection PyArgumentList
 logging.basicConfig(
     format='{asctime} - {name} - {levelname} - {message} {filename}:{lineno}',
@@ -31,15 +35,36 @@ class InvalidToken(Exception):
     ...
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--host', default='minechat.dvmn.org',
-    )
-    parser.add_argument(
-        '--port', default=5000,
-    )
-    return parser.parse_args()
+class ConnectionNotify:
+
+    def __init__(self, queue, notify_class):
+        self.queue = queue
+        self.notify_class = notify_class
+
+    def initiate(self):
+        self.queue.put_nowait(self.notify_class.INITIATED)
+
+    def establish(self):
+        self.queue.put_nowait(self.notify_class.ESTABLISHED)
+
+    def close(self):
+        self.queue.put_nowait(self.notify_class.CLOSED)
+
+
+@asynccontextmanager
+async def open_connection(host, port, notify: ConnectionNotify):
+    logger.info('Initiate connection')
+    notify.initiate()
+    reader, writer = await asyncio.open_connection(host, port)
+    logger.info('Connection established')
+    notify.establish()
+    try:
+        yield reader, writer
+    finally:
+        logger.info('Close the connection')
+        notify.close()
+        writer.close()
+        await writer.wait_closed()
 
 
 async def load_credentials():
@@ -70,10 +95,8 @@ async def save_messages(queues):
 
 
 async def read_messages(host, port, queues):
-    queues['status'].put_nowait(gui.ReadConnectionStateChanged.INITIATED)
-    reader, writer = await asyncio.open_connection(host, port)
-    queues['status'].put_nowait(gui.ReadConnectionStateChanged.ESTABLISHED)
-    try:
+    notify = ConnectionNotify(queues['status'], ReadConnectionStateChanged)
+    async with open_connection(host, port, notify) as (reader, writer):
         while True:
             line = await reader.readline()
             msg = line.decode()
@@ -82,15 +105,9 @@ async def read_messages(host, port, queues):
             queues['msgs'].put_nowait(full_msg.strip())
             queues['history'].put_nowait(full_msg)
             queues['watchdog'].put_nowait('New message in chat')
-    finally:
-        logger.info('Close the connection')
-        queues['status'].put_nowait(gui.ReadConnectionStateChanged.CLOSED)
-        writer.close()
-        if not writer.is_closing():
-            await writer.wait_closed()
 
 
-async def authorize(reader, writer):
+async def authorize(reader, writer, queues):
     credentials = await load_credentials()
     logger.debug('credentials: %s', credentials)
     welcome_msg = await reader.readline()
@@ -100,39 +117,24 @@ async def authorize(reader, writer):
     encoded_response = await reader.readline()
     response = json.loads(encoded_response.decode())
     if response is None:
-        raise InvalidToken
-    return response
-
-
-async def send_msgs(host, port, queues):
-    queues['status'].put_nowait(gui.SendingConnectionStateChanged.INITIATED)
-    reader, writer = await asyncio.open_connection(host, port)
-    queues['status'].put_nowait(gui.SendingConnectionStateChanged.ESTABLISHED)
-    try:
-        response = await authorize(reader, writer)
-    except InvalidToken:
         messagebox.showerror(
             'Invalid Token', 'Check your token or register again',
         )
-        raise
-    nickname = response['nickname']
-    event = gui.NicknameReceived(nickname)
-    queues['status'].put_nowait(event)
+        raise InvalidToken
+    queues['status'].put_nowait(gui.NicknameReceived(response['nickname']))
     logger.debug('Response: %s', response)
-    try:
+
+
+async def send_msgs(host, port, queues):
+    notify = ConnectionNotify(queues['status'], SendingConnectionStateChanged)
+    async with open_connection(host, port, notify) as (reader, writer):
+        await authorize(reader, writer, queues)
         while True:
             msg = await queues['send'].get()
             logger.debug('message: %s', msg)
             writer.write((msg + '\n\n').encode())
             await writer.drain()
             queues['watchdog'].put_nowait('Message sent')
-    finally:
-        queues['status'].put_nowait(
-            gui.SendingConnectionStateChanged.CLOSED,
-        )
-        writer.close()
-        if not writer.is_closing():
-            await writer.wait_closed()
 
 
 async def watch_for_connection(watchdog_queue):
@@ -157,7 +159,6 @@ async def main(queues):
 
 
 if __name__ == '__main__':
-    args = parse_args()
     queue_names = {'msgs', 'send', 'status', 'history', 'watchdog'}
     queues = {name: asyncio.Queue() for name in queue_names}
     loop = asyncio.get_event_loop()
