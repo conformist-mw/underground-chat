@@ -1,21 +1,17 @@
-import argparse
 import asyncio
-import json
 import logging
-import os
 from contextlib import suppress
 from datetime import datetime
-from tkinter import messagebox
-
-from contextlib import asynccontextmanager
-from typing import Optional, Union, Any
 
 import aiofiles
 from async_timeout import timeout
 
 import gui
-
 from gui import ReadConnectionStateChanged, SendingConnectionStateChanged
+
+from .auth import authorize
+from .utils import ConnectionNotify, open_connection
+
 # noinspection PyArgumentList
 logging.basicConfig(
     format='{asctime} - {name} - {levelname} - {message} {filename}:{lineno}',
@@ -25,60 +21,6 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.DEBUG)
 watchdog_logger = logging.getLogger('watchdog')
 watchdog_logger.setLevel(logging.DEBUG)
-
-
-class TokenDoesNotExists(Exception):
-    ...
-
-
-class InvalidToken(Exception):
-    ...
-
-
-class ConnectionNotify:
-
-    def __init__(self, queue, notify_class):
-        self.queue = queue
-        self.notify_class = notify_class
-
-    def initiate(self):
-        self.queue.put_nowait(self.notify_class.INITIATED)
-
-    def establish(self):
-        self.queue.put_nowait(self.notify_class.ESTABLISHED)
-
-    def close(self):
-        self.queue.put_nowait(self.notify_class.CLOSED)
-
-
-@asynccontextmanager
-async def open_connection(host, port, notify: ConnectionNotify):
-    logger.info('Initiate connection')
-    notify.initiate()
-    reader, writer = await asyncio.open_connection(host, port)
-    logger.info('Connection established')
-    notify.establish()
-    try:
-        yield reader, writer
-    finally:
-        logger.info('Close the connection')
-        notify.close()
-        writer.close()
-        await writer.wait_closed()
-
-
-async def load_credentials():
-    if not os.path.exists('.credentials'):
-        messagebox.showerror(
-            'Credentials not found',
-            'File .credentials does not exists. Please register first',
-        )
-        raise TokenDoesNotExists
-    async with aiofiles.open('.credentials') as file:
-        content = await file.read()
-        if content:
-            return json.loads(content)
-        return None
 
 
 async def load_messages(msg_queue):
@@ -105,24 +47,6 @@ async def read_messages(host, port, queues):
             queues['msgs'].put_nowait(full_msg.strip())
             queues['history'].put_nowait(full_msg)
             queues['watchdog'].put_nowait('New message in chat')
-
-
-async def authorize(reader, writer, queues):
-    credentials = await load_credentials()
-    logger.debug('credentials: %s', credentials)
-    welcome_msg = await reader.readline()
-    logger.debug('Welcome message: %s', welcome_msg)
-    writer.write((credentials['account_hash'] + '\n').encode())
-    await writer.drain()
-    encoded_response = await reader.readline()
-    response = json.loads(encoded_response.decode())
-    if response is None:
-        messagebox.showerror(
-            'Invalid Token', 'Check your token or register again',
-        )
-        raise InvalidToken
-    queues['status'].put_nowait(gui.NicknameReceived(response['nickname']))
-    logger.debug('Response: %s', response)
 
 
 async def send_msgs(host, port, queues):
@@ -162,5 +86,5 @@ if __name__ == '__main__':
     queue_names = {'msgs', 'send', 'status', 'history', 'watchdog'}
     queues = {name: asyncio.Queue() for name in queue_names}
     loop = asyncio.get_event_loop()
-    with suppress(InvalidToken, gui.TkAppClosed):
+    with suppress(gui.TkAppClosed):
         loop.run_until_complete(main(queues))

@@ -1,0 +1,6 @@
+class TokenDoesNotExists(Exception):
+    ...
+
+
+class InvalidToken(Exception):
+    ...
