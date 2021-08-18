@@ -5,6 +5,7 @@ from datetime import datetime
 
 import aiofiles
 import anyio
+from anyio import sleep
 from async_timeout import timeout
 
 import gui
@@ -63,6 +64,17 @@ async def send_msgs(host, port, queues):
             queues['watchdog'].put_nowait('Message sent')
 
 
+async def ping_server(host, port, queues):
+    notify = ConnectionNotify(queues['status'])
+    async with open_connection(host, port, notify) as (reader, writer):
+        while True:
+            writer.write(b'\n')
+            await writer.drain()
+            await reader.readline()
+            queues['watchdog'].put_nowait('Connection alive')
+            await sleep(WATCHDOG_TIMEOUT)
+
+
 async def watch_for_connection(watchdog_queue):
     while True:
         try:
@@ -79,12 +91,15 @@ async def handle_connection(queues):
         task_group.start_soon(watch_for_connection, queues['watchdog'])
         task_group.start_soon(read_messages, 'minechat.dvmn.org', 5000, queues)
         task_group.start_soon(send_msgs, 'minechat.dvmn.org', 5050, queues)
+        task_group.start_soon(ping_server, 'minechat.dvmn.org', 5050, queues)
 
 
 async def main(queues):
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(load_messages, queues['msgs'])
-        task_group.start_soon(gui.draw, queues['msgs'], queues['send'], queues['status'])
+        task_group.start_soon(
+            gui.draw, queues['msgs'], queues['send'], queues['status'],
+        )
         task_group.start_soon(save_messages, queues)
         task_group.start_soon(handle_connection, queues)
 

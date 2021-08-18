@@ -13,18 +13,21 @@ watchdog_logger = logging.getLogger('watchdog')
 
 class ConnectionNotify:
 
-    def __init__(self, queue, notify_class):
+    def __init__(self, queue, notify_class=None):
         self.queue = queue
         self.notify_class = notify_class
 
+    def _get_attr(self, attr):
+        return getattr(self.notify_class, attr, attr)
+
     def initiate(self):
-        self.queue.put_nowait(self.notify_class.INITIATED)
+        self.queue.put_nowait(self._get_attr('INITIATED'))
 
     def establish(self):
-        self.queue.put_nowait(self.notify_class.ESTABLISHED)
+        self.queue.put_nowait(self._get_attr('ESTABLISHED'))
 
     def close(self):
-        self.queue.put_nowait(self.notify_class.CLOSED)
+        self.queue.put_nowait(self._get_attr('CLOSED'))
 
 
 @asynccontextmanager
