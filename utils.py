@@ -1,8 +1,14 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from socket import gaierror
+
+from anyio import sleep
+
+SLEEP_TIMEOUT = 3
 
 logger = logging.getLogger(__file__)
+watchdog_logger = logging.getLogger('watchdog')
 
 
 class ConnectionNotify:
@@ -35,3 +41,17 @@ async def open_connection(host, port, notify: ConnectionNotify):
         notify.close()
         writer.close()
         await writer.wait_closed()
+
+
+def reconnect(func):
+    async def wrapper(*args, **kwargs):
+        while True:
+            try:
+                await func(*args, **kwargs)
+            except (ConnectionError, gaierror):
+                watchdog_logger.error('Got connection error')
+                await sleep(SLEEP_TIMEOUT)
+            except BaseException as e:
+                watchdog_logger.error('Unhandled error: %r', e)
+                await sleep(SLEEP_TIMEOUT)
+    return wrapper

@@ -4,13 +4,15 @@ from contextlib import suppress
 from datetime import datetime
 
 import aiofiles
+import anyio
 from async_timeout import timeout
 
 import gui
+from auth import authorize
 from gui import ReadConnectionStateChanged, SendingConnectionStateChanged
+from utils import ConnectionNotify, open_connection, reconnect
 
-from .auth import authorize
-from .utils import ConnectionNotify, open_connection
+WATCHDOG_TIMEOUT = 5
 
 # noinspection PyArgumentList
 logging.basicConfig(
@@ -64,22 +66,27 @@ async def send_msgs(host, port, queues):
 async def watch_for_connection(watchdog_queue):
     while True:
         try:
-            async with timeout(2):
+            async with timeout(WATCHDOG_TIMEOUT):
                 msg = await watchdog_queue.get()
                 watchdog_logger.debug(msg)
         except asyncio.TimeoutError:
             raise ConnectionError
 
 
+@reconnect
+async def handle_connection(queues):
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(watch_for_connection, queues['watchdog'])
+        task_group.start_soon(read_messages, 'minechat.dvmn.org', 5000, queues)
+        task_group.start_soon(send_msgs, 'minechat.dvmn.org', 5050, queues)
+
+
 async def main(queues):
-    await asyncio.gather(
-        watch_for_connection(queues['watchdog']),
-        load_messages(queues['msgs']),
-        gui.draw(queues['msgs'], queues['send'], queues['status']),
-        read_messages('minechat.dvmn.org', 5000, queues),
-        save_messages(queues),
-        send_msgs('minechat.dvmn.org', 5050, queues),
-    )
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(load_messages, queues['msgs'])
+        task_group.start_soon(gui.draw, queues['msgs'], queues['send'], queues['status'])
+        task_group.start_soon(save_messages, queues)
+        task_group.start_soon(handle_connection, queues)
 
 
 if __name__ == '__main__':
