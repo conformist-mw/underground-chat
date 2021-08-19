@@ -1,4 +1,5 @@
 import asyncio
+import configparser
 import logging
 from contextlib import suppress
 from datetime import datetime
@@ -26,16 +27,16 @@ watchdog_logger = logging.getLogger('watchdog')
 watchdog_logger.setLevel(logging.DEBUG)
 
 
-async def load_messages(msg_queue):
-    async with aiofiles.open('minechat.history') as file:
+async def load_messages(msg_queue, filename):
+    async with aiofiles.open(filename) as file:
         async for line in file:
             msg_queue.put_nowait(line.rstrip())
 
 
-async def save_messages(queues):
+async def save_messages(queue, filename):
     while True:
-        msg = await queues['history'].get()
-        async with aiofiles.open('minechat.history', 'a') as file:
+        msg = await queue.get()
+        async with aiofiles.open(filename, 'a') as file:
             await file.write(msg)
 
 
@@ -86,27 +87,35 @@ async def watch_for_connection(watchdog_queue):
 
 
 @reconnect
-async def handle_connection(queues):
+async def handle_connection(queues, settings):
+    host = settings['reader']['host']
+    reading_port = settings['reader']['port']
+    sending_port = settings['writer']['port']
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(watch_for_connection, queues['watchdog'])
-        task_group.start_soon(read_messages, 'minechat.dvmn.org', 5000, queues)
-        task_group.start_soon(send_msgs, 'minechat.dvmn.org', 5050, queues)
-        task_group.start_soon(ping_server, 'minechat.dvmn.org', 5050, queues)
+        task_group.start_soon(read_messages, host, reading_port, queues)
+        task_group.start_soon(send_msgs, host, sending_port, queues)
+        task_group.start_soon(ping_server, host, sending_port, queues)
 
 
-async def main(queues):
+async def main(queues, settings):
+    history_filename = settings['common']['history_filename']
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(load_messages, queues['msgs'])
+        task_group.start_soon(load_messages, queues['msgs'], history_filename)
         task_group.start_soon(
             gui.draw, queues['msgs'], queues['send'], queues['status'],
         )
-        task_group.start_soon(save_messages, queues)
-        task_group.start_soon(handle_connection, queues)
+        task_group.start_soon(
+            save_messages, queues['history'], history_filename,
+        )
+        task_group.start_soon(handle_connection, queues, settings)
 
 
 if __name__ == '__main__':
+    settings = configparser.ConfigParser()
+    settings.read('settings.ini')
     queue_names = {'msgs', 'send', 'status', 'history', 'watchdog'}
     queues = {name: asyncio.Queue() for name in queue_names}
     loop = asyncio.get_event_loop()
     with suppress(gui.TkAppClosed):
-        loop.run_until_complete(main(queues))
+        loop.run_until_complete(main(queues, settings))

@@ -8,17 +8,19 @@ import aiofiles
 from exceptions import InvalidToken
 from gui import NicknameReceived
 
+CREDENTIALS_FILENAME = '.credentials'
+
 logger = logging.getLogger(__file__)
 
 
 async def save_credentials(credentials):
-    async with aiofiles.open('.credentials', 'w') as file:
+    async with aiofiles.open(CREDENTIALS_FILENAME, 'w') as file:
         await file.write(json.dumps(credentials))
 
 
 async def load_credentials():
     try:
-        async with aiofiles.open('.credentials') as file:
+        async with aiofiles.open(CREDENTIALS_FILENAME) as file:
             content = await file.read()
             return json.loads(content)
     except FileNotFoundError:
