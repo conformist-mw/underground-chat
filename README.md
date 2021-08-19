@@ -1,15 +1,20 @@
-# Underground chat cli
+# Underground chat
 
-Connect to the chat via `asyncio.open_connection` to log messages:
+GUI application to read and send messages trough async socket.
 
-```shell
-python main.py
-```
 
-Send messages to the chat from cli:
+#### Registration
 
 ```shell
-python client.py --msg 'Some message!'
+python register.py
 ```
 
-![underground-chat-cli](https://user-images.githubusercontent.com/13550539/126880237-6efa048d-5f3c-4612-8ffd-10da34b39dc3.png)
+![register](https://user-images.githubusercontent.com/13550539/130141423-b4f7c4a1-27cc-4c56-ab2a-0381e2c96e20.gif)
+
+#### Read and send messages
+
+```shell
+python gui_client.py
+```
+
+![output1](https://user-images.githubusercontent.com/13550539/130141351-e4ed5c60-6aa9-4b70-844c-69722f562d70.gif)
