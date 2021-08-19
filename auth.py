@@ -1,28 +1,48 @@
+import asyncio
 import json
 import logging
-import os
 from tkinter import messagebox
 
 import aiofiles
 
-from exceptions import InvalidToken, TokenDoesNotExists
+from exceptions import InvalidToken
 from gui import NicknameReceived
 
 logger = logging.getLogger(__file__)
 
 
+async def save_credentials(credentials):
+    async with aiofiles.open('.credentials', 'w') as file:
+        await file.write(json.dumps(credentials))
+
+
 async def load_credentials():
-    if not os.path.exists('.credentials'):
-        messagebox.showerror(
-            'Credentials not found',
-            'File .credentials does not exists. Please register first',
-        )
-        raise TokenDoesNotExists
-    async with aiofiles.open('.credentials') as file:
-        content = await file.read()
-        if content:
+    try:
+        async with aiofiles.open('.credentials') as file:
+            content = await file.read()
             return json.loads(content)
-        return None
+    except FileNotFoundError:
+        logger.debug('Credentials file does not exists')
+        pass
+    except json.JSONDecodeError:
+        logger.debug('Credentials file is empty or has invalid json')
+        return {}
+
+
+async def register(host, port, nickname):
+    reader, writer = await asyncio.open_connection(host, port)
+    msg = await reader.readline()
+    logger.debug('Welcome message: %s', msg)
+    writer.write(b'\n')
+    await writer.drain()
+    msg = await reader.readline()
+    logger.debug('Second message: %s', msg)
+    writer.write(f'{nickname or "Anonymous"}\n'.encode())
+    await writer.drain()
+    response = await reader.readline()
+    logger.debug('Response credentials: %s', response)
+    credentials = json.loads(response.decode())
+    return credentials
 
 
 async def authorize(reader, writer, queues):
